@@ -1,202 +1,87 @@
-import 'dart:convert';
-// import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth_basic/flutter_bluetooth_basic.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+import 'package:flutter_reactive_ble_example/src/ble/ble_device_connector.dart';
+import 'package:flutter_reactive_ble_example/src/ble/ble_device_interactor.dart';
+import 'package:flutter_reactive_ble_example/src/ble/ble_scanner.dart';
+import 'package:flutter_reactive_ble_example/src/ble/ble_status_monitor.dart';
+import 'package:flutter_reactive_ble_example/src/ui/ble_status_screen.dart';
+import 'package:flutter_reactive_ble_example/src/ui/device_list.dart';
+import 'package:provider/provider.dart';
 
-void main() => runApp(MyApp());
+import 'src/ble/ble_logger.dart';
 
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Bluetooth scanner',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: MyHomePage(title: 'Bluetooth Scanner'),
-    );
-  }
-}
+const _themeColor = Colors.lightGreen;
 
-class MyHomePage extends StatefulWidget {
-  MyHomePage({Key key, this.title}) : super(key: key);
-  final String title;
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
 
-  @override
-  _MyHomePageState createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  BluetoothManager bluetoothManager = BluetoothManager.instance;
-
-  bool _connected = false;
-  BluetoothDevice _device;
-  String tips = 'no device connect';
-
-  @override
-  void initState() {
-    super.initState();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) => initBluetooth());
-  }
-
-  // Platform messages are asynchronous, so we initialize in an async method.
-  Future<void> initBluetooth() async {
-    bluetoothManager.startScan(timeout: Duration(seconds: 4));
-
-    bool isConnected = await bluetoothManager.isConnected;
-
-    bluetoothManager.state.listen((state) {
-      print('cur device status: $state');
-
-      switch (state) {
-        case BluetoothManager.CONNECTED:
-          setState(() {
-            _connected = true;
-            tips = 'connect success';
-          });
-          break;
-        case BluetoothManager.DISCONNECTED:
-          setState(() {
-            _connected = false;
-            tips = 'disconnect success';
-          });
-          break;
-        default:
-          break;
-      }
-    });
-
-    if (!mounted) return;
-
-    if (isConnected) {
-      setState(() {
-        _connected = true;
-      });
-    }
-  }
-
-  void _onConnect() async {
-    if (_device != null && _device.address != null) {
-      await bluetoothManager.connect(_device);
-    } else {
-      setState(() {
-        tips = 'please select device';
-      });
-      print('please select device');
-    }
-  }
-
-  void _onDisconnect() async {
-    await bluetoothManager.disconnect();
-  }
-
-  void _sendData() async {
-    List<int> bytes = latin1.encode('Hello world!\n\n\n').toList();
-
-    // Set codetable west. Add import 'dart:typed_data';
-    // List<int> bytes = Uint8List.fromList(List.from('\x1Bt'.codeUnits)..add(6));
-    // Text with special characters
-    // bytes += latin1.encode('blåbærgrød\n\n\n');
-
-    await bluetoothManager.writeData(bytes);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
-      body: RefreshIndicator(
-        onRefresh: () =>
-            bluetoothManager.startScan(timeout: Duration(seconds: 4)),
-        child: SingleChildScrollView(
-          child: Column(
-            children: <Widget>[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Padding(
-                    padding: EdgeInsets.symmetric(vertical: 10, horizontal: 10),
-                    child: Text(tips),
-                  ),
-                ],
-              ),
-              Divider(),
-              StreamBuilder<List<BluetoothDevice>>(
-                stream: bluetoothManager.scanResults,
-                initialData: [],
-                builder: (c, snapshot) => Column(
-                  children: snapshot.data
-                      .map((d) => ListTile(
-                            title: Text(d.name ?? ''),
-                            subtitle: Text(d.address),
-                            onTap: () async {
-                              setState(() {
-                                _device = d;
-                              });
-                            },
-                            trailing:
-                                _device != null && _device.address == d.address
-                                    ? Icon(
-                                        Icons.check,
-                                        color: Colors.green,
-                                      )
-                                    : null,
-                          ))
-                      .toList(),
-                ),
-              ),
-              Divider(),
-              Container(
-                padding: EdgeInsets.fromLTRB(20, 5, 20, 10),
-                child: Column(
-                  children: <Widget>[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        OutlineButton(
-                          child: Text('connect'),
-                          onPressed: _connected ? null : _onConnect,
-                        ),
-                        SizedBox(width: 10.0),
-                        OutlineButton(
-                          child: Text('disconnect'),
-                          onPressed: _connected ? _onDisconnect : null,
-                        ),
-                      ],
-                    ),
-                    OutlineButton(
-                      child: Text('Send test data'),
-                      onPressed: _connected ? _sendData : null,
-                    ),
-                  ],
-                ),
-              )
-            ],
+  final _bleLogger = BleLogger();
+  final _ble = FlutterReactiveBle();
+  final _scanner = BleScanner(ble: _ble, logMessage: _bleLogger.addToLog);
+  final _monitor = BleStatusMonitor(_ble);
+  final _connector = BleDeviceConnector(
+    ble: _ble,
+    logMessage: _bleLogger.addToLog,
+  );
+  final _serviceDiscoverer = BleDeviceInteractor(
+    bleDiscoverServices: _ble.discoverServices,
+    readCharacteristic: _ble.readCharacteristic,
+    writeWithResponse: _ble.writeCharacteristicWithResponse,
+    writeWithOutResponse: _ble.writeCharacteristicWithoutResponse,
+    subscribeToCharacteristic: _ble.subscribeToCharacteristic,
+    logMessage: _bleLogger.addToLog,
+  );
+  runApp(
+    MultiProvider(
+      providers: [
+        Provider.value(value: _scanner),
+        Provider.value(value: _monitor),
+        Provider.value(value: _connector),
+        Provider.value(value: _serviceDiscoverer),
+        Provider.value(value: _bleLogger),
+        StreamProvider<BleScannerState?>(
+          create: (_) => _scanner.state,
+          initialData: const BleScannerState(
+            discoveredDevices: [],
+            scanIsInProgress: false,
           ),
         ),
+        StreamProvider<BleStatus?>(
+          create: (_) => _monitor.state,
+          initialData: BleStatus.unknown,
+        ),
+        StreamProvider<ConnectionStateUpdate>(
+          create: (_) => _connector.state,
+          initialData: const ConnectionStateUpdate(
+            deviceId: 'Unknown device',
+            connectionState: DeviceConnectionState.disconnected,
+            failure: null,
+          ),
+        ),
+      ],
+      child: MaterialApp(
+        title: 'Flutter Reactive BLE example',
+        color: _themeColor,
+        theme: ThemeData(primarySwatch: _themeColor),
+        home: const HomeScreen(),
       ),
-      floatingActionButton: StreamBuilder<bool>(
-        stream: bluetoothManager.isScanning,
-        initialData: false,
-        builder: (c, snapshot) {
-          if (snapshot.data) {
-            return FloatingActionButton(
-              child: Icon(Icons.stop),
-              onPressed: () => bluetoothManager.stopScan(),
-              backgroundColor: Colors.red,
-            );
+    ),
+  );
+}
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) => Consumer<BleStatus?>(
+        builder: (_, status, __) {
+          if (status == BleStatus.ready) {
+            return const DeviceListScreen();
           } else {
-            return FloatingActionButton(
-                child: Icon(Icons.search),
-                onPressed: () =>
-                    bluetoothManager.startScan(timeout: Duration(seconds: 4)));
+            return BleStatusScreen(status: status ?? BleStatus.unknown);
           }
         },
-      ),
-    );
-  }
+      );
 }
